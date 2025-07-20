@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"  # MinIO API
+      - "9001:9001"  # MinIO Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - devnet
+
+  minio-client:
+    image: minio/mc:latest
+    container_name: minio-client
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      mc alias set local http://minio:9000 minioadmin minioadmin123;
+      echo 'MinIO client configured successfully';
+      while true; do sleep 3600; done
+      "
+    volumes:
+      - ./scripts:/scripts
+    networks:
+      - devnet
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: devdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - devnet
+
+volumes:
+  minio-data:
+  pgdata:
+
+networks:
+  devnet:
+    driver: bridge
