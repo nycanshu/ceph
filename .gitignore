@@ -1,0 +1,31 @@
+# Node modules
+/backend/node_modules/
+node_modules/
+
+# Environment files
+.env
+
+# Logs
+*.log
+logs
+npm-debug.log*
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# VSCode settings
+.vscode/
+
+# Prisma generated files
+/backend/prisma/dev.db
+/backend/prisma/dev.db-journal
+
+# Docker
+**/.env.docker
+docker-compose.override.yml
+
+# Ignore coverage and build artifacts (if any)
+coverage/
+dist/
+build/
