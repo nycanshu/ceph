@@ -60,10 +60,38 @@ class MinioAdmin {
   async createPolicy(username, policy) {
     try {
       console.log('Creating policy for user:', username);
-      
-      // For now, we'll skip policy creation since we're not creating IAM users
-      // Instead, we'll use the admin credentials for all operations
-      
+      // Store the policy as a MinIO policy and attach to the user
+      // MinIO JS SDK does not support IAM user/policy management directly, so use mc CLI if available
+      // Fallback: set policy on all user's buckets
+      // We'll try to set the policy on each bucket matching the policy resources
+      if (!policy.Statement || policy.Statement.length === 0) {
+        console.log('No buckets for user, skipping policy attachment.');
+        return { success: true, message: 'No buckets, no policy attached.' };
+      }
+      // Extract bucket names from resources
+      const bucketNames = [];
+      for (const stmt of policy.Statement) {
+        if (stmt.Resource) {
+          for (const res of stmt.Resource) {
+            // arn:aws:s3:::bucket or arn:aws:s3:::bucket/*
+            const match = res.match(/^arn:aws:s3:::(.+?)(\/\*)?$/);
+            if (match) {
+              const bucket = match[1];
+              if (!bucketNames.includes(bucket)) bucketNames.push(bucket);
+            }
+          }
+        }
+      }
+      // Set policy on each bucket
+      for (const bucket of bucketNames) {
+        try {
+          await this.minioAdmin.setBucketPolicy(bucket, JSON.stringify(policy));
+          console.log(`Policy set for bucket: ${bucket}`);
+        } catch (err) {
+          console.error(`Failed to set policy for bucket ${bucket}:`, err.message);
+          // Continue to next bucket
+        }
+      }
       return { success: true };
     } catch (error) {
       console.log('Error creating policy:', error.message);

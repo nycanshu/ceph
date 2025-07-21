@@ -50,30 +50,43 @@ async function createMinioUser(username, accessKey, secretKey) {
 }
 
 // Create MinIO policy for user using MinioAdmin helper
-async function createMinioPolicy(username) {
+async function createMinioPolicy(userId, username) {
   try {
+    // Query all buckets owned by the user
+    const buckets = await prisma.bucket.findMany({
+      where: { userId },
+      select: { name: true }
+    });
+    // Build resource ARNs for each bucket
+    const resources = buckets.flatMap(bucket => [
+      `arn:aws:s3:::${bucket.name}`,
+      `arn:aws:s3:::${bucket.name}/*`
+    ]);
+    // If no buckets, use a placeholder resource or empty Statement
+    let statement = [];
+    if (resources.length > 0) {
+      statement.push({
+        Effect: 'Allow',
+        Action: [
+          's3:GetObject',
+          's3:PutObject',
+          's3:DeleteObject',
+          's3:ListBucket'
+        ],
+        Resource: resources
+      });
+    }
+    // Policy object
     const policy = {
       Version: '2012-10-17',
-      Statement: [
-        {
-          Effect: 'Allow',
-          Action: [
-            's3:GetObject',
-            's3:PutObject',
-            's3:DeleteObject',
-            's3:ListBucket'
-          ],
-          Resource: [
-            `arn:aws:s3:::${username}-*`,
-            `arn:aws:s3:::${username}-*/*`
-          ]
-        }
-      ]
+      Statement: statement
     };
-
+    console.log(`Creating policy for ${username}:`, JSON.stringify(policy, null, 2));
+    // Store policy in MinIO
     const result = await minioAdmin.createPolicy(username, policy);
     return result;
   } catch (error) {
+    console.error('Error in createMinioPolicy:', error);
     return { success: false, error: error.message };
   }
 }
@@ -133,16 +146,6 @@ async function signup(req, res) {
       });
     }
 
-    // Create MinIO policy
-    const policyResult = await createMinioPolicy(username);
-    if (!policyResult.success) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to create MinIO policy',
-        message: policyResult.error
-      });
-    }
-
     // Create user in database
     const user = await prisma.user.create({
       data: {
@@ -152,6 +155,16 @@ async function signup(req, res) {
         minioSecretKey: secretKey
       }
     });
+
+    // After user is created, create initial MinIO policy
+    const policyResult = await createMinioPolicy(user.id, username);
+    if (!policyResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create MinIO policy',
+        message: policyResult.error
+      });
+    }
 
     // Remove sensitive data from response
     const { passwordHash: _, minioSecretKey: __, ...userResponse } = user;

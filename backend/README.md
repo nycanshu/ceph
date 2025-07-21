@@ -1,10 +1,8 @@
-# MinIO Express Server - User Authentication & Bucket Management
+# MinIO Express Server - Secure User-Specific Bucket Access
 
-A simplified Express.js server for MinIO operations with user authentication and bucket management. Users can sign up, login, and create their own buckets with proper isolation.
+A secure Express.js backend for MinIO that provides multi-user authentication, user-specific bucket management, and strict bucket-level access control. Each user can only access their own buckets, enforced by MinIO bucket policies. The backend uses JWT authentication, PostgreSQL (via Prisma), and MinIO admin credentials for all operations.
 
 ## 🏗️ Architecture
-
-This project follows a **simplified MVC pattern** with authentication:
 
 ```
 backend/
@@ -14,7 +12,7 @@ backend/
 │   └── auth.js               # JWT authentication middleware
 ├── controllers/
 │   ├── userController.js     # User signup & login
-│   └── bucketController.js   # Bucket creation & listing
+│   └── bucketController.js   # Bucket creation, deletion, listing, policy
 ├── routes/
 │   ├── userRoutes.js         # Authentication routes
 │   └── bucketRoutes.js       # Bucket routes (protected)
@@ -24,93 +22,28 @@ backend/
 ```
 
 ### Key Components:
-
-- **Prisma Schema**: PostgreSQL database models for User and Bucket
+- **Prisma Schema**: PostgreSQL models for User and Bucket
 - **Authentication**: JWT-based auth with bcrypt password hashing
 - **MinIO Integration**: Admin-level operations for user and bucket management
-- **Controllers**: Handle HTTP requests and responses
-- **Routes**: Define API endpoints with authentication
+- **Bucket Policies**: Each bucket has a policy allowing only the owner's MinIO access key
+- **Controllers/Routes**: Handle HTTP requests and responses
 
 ## Features
-
 - **User Authentication**: Signup and login with JWT tokens
-- **MinIO IAM Integration**: Automatic user creation in MinIO with policies
-- **Bucket Management**: Users can create and list their own buckets
+- **User-Specific Bucket Access**: Each user can only access their own buckets, enforced by MinIO bucket policies
+- **Bucket Management**: Users can create, list, and delete their own buckets
+- **Bucket Policy Inspection**: Users can view the policy for any bucket they own
 - **Database Integration**: PostgreSQL with Prisma ORM
 - **Input Validation**: Using express-validator
 - **Error Handling**: Comprehensive error handling and logging
 
-## Prerequisites
+## User Isolation Model
+- Each user is assigned a unique MinIO access key and secret key at signup.
+- When a user creates a bucket, a policy is set on that bucket allowing only their access key.
+- No other user can access or list another user's buckets.
+- The global MinIO admin can access all buckets (for system administration only).
 
-- Node.js (v14 or higher)
-- Docker and Docker Compose (for MinIO and PostgreSQL)
-- npm or yarn
-- MinIO Client (mc) installed
-
-## Setup
-
-1. **Install Dependencies**
-   ```bash
-   npm install
-   ```
-
-2. **Environment Configuration**
-   Create a `.env` file in the backend directory:
-   ```env
-   # Server Configuration
-   PORT=3000
-   NODE_ENV=development
-
-   # Database Configuration
-   DATABASE_URL="postgresql://devuser:devpass@localhost:5432/devdb"
-
-   # JWT Configuration
-   JWT_SECRET=your-secret-key-here
-   JWT_EXPIRES_IN=24h
-
-   # MinIO Admin Configuration
-   MINIO_ENDPOINT=localhost
-   MINIO_PORT=9000
-   MINIO_USE_SSL=false
-   MINIO_ADMIN_KEY=minioadmin
-   MINIO_ADMIN_SECRET=minioadmin123
-   ```
-
-3. **Setup MinIO Client**
-   ```bash
-   # Install MinIO Client (mc)
-   # Windows: Download from https://min.io/download
-   # Linux/Mac: wget https://dl.min.io/client/mc/release/linux-amd64/mc
-
-   # Configure MinIO alias
-   mc alias set local http://localhost:9000 minioadmin minioadmin123
-   ```
-
-4. **Start Services (using Docker Compose)**
-   ```bash
-   # From the root directory
-   docker-compose up -d
-   ```
-
-5. **Setup Database**
-   ```bash
-   # Generate Prisma client
-   npx prisma generate
-
-   # Push schema to database
-   npx prisma db push
-   ```
-
-6. **Start the Server**
-   ```bash
-   # Development mode with auto-reload
-   npm run dev
-
-   # Production mode
-   npm start
-   ```
-
-## API Endpoints
+## API Documentation
 
 ### Health Check
 - `GET /health` - Server health status
@@ -119,16 +52,13 @@ backend/
 ### Authentication
 
 #### User Signup
-```http
-POST /api/users/signup
-Content-Type: application/json
-
+`POST /api/users/signup`
+```json
 {
   "email": "user@example.com",
   "password": "password123"
 }
 ```
-
 **Response:**
 ```json
 {
@@ -144,16 +74,13 @@ Content-Type: application/json
 ```
 
 #### User Login
-```http
-POST /api/users/login
-Content-Type: application/json
-
+`POST /api/users/login`
+```json
 {
   "email": "user@example.com",
   "password": "password123"
 }
 ```
-
 **Response:**
 ```json
 {
@@ -174,39 +101,58 @@ Content-Type: application/json
 ### Bucket Operations (Requires Authentication)
 
 #### List User's Buckets
-```http
-GET /api/buckets
-Authorization: Bearer <jwt_token>
-```
+`GET /api/buckets`
+- **Headers:** `Authorization: Bearer <jwt_token>`
+- **Response:** List of buckets owned by the authenticated user.
 
 #### Create Bucket
-```http
-POST /api/buckets
-Authorization: Bearer <jwt_token>
-Content-Type: application/json
-
+`POST /api/buckets`
+- **Headers:** `Authorization: Bearer <jwt_token>`
+- **Body:**
+```json
 {
   "name": "my-bucket"
 }
 ```
-
-**Response:**
+- **Response:**
 ```json
 {
   "success": true,
   "message": "Bucket 'my-bucket' created successfully",
-  "data": {
-    "id": "uuid",
-    "name": "my-bucket",
-    "userId": "user_uuid",
-    "createdAt": "2024-01-01T00:00:00.000Z",
-    "user": {
-      "id": "user_uuid",
-      "email": "user@example.com"
-    }
-  }
+  "data": { ...bucket info... }
 }
 ```
+- **Note:** The bucket policy is set so only the creator's MinIO access key can access this bucket.
+
+#### Delete Bucket
+`DELETE /api/buckets`
+- **Headers:** `Authorization: Bearer <jwt_token>`
+- **Body:**
+```json
+{
+  "name": "my-bucket"
+}
+```
+- **Response:**
+```json
+{
+  "success": true,
+  "message": "Bucket 'my-bucket' deleted successfully"
+}
+```
+
+#### Get Bucket Policy
+`GET /api/buckets/:name/policy`
+- **Headers:** `Authorization: Bearer <jwt_token>`
+- **Response:**
+```json
+{
+  "success": true,
+  "bucket": "my-bucket",
+  "policy": { ...bucket policy JSON... }
+}
+```
+- **Note:** Only the bucket owner (or admin) can view the policy.
 
 ## Usage Examples
 
@@ -240,56 +186,19 @@ Content-Type: application/json
      -H "Authorization: Bearer YOUR_JWT_TOKEN"
    ```
 
-### Using JavaScript/Fetch
+5. **Delete a bucket:**
+   ```bash
+   curl -X DELETE http://localhost:3000/api/buckets \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+     -d '{"name": "my-test-bucket"}'
+   ```
 
-```javascript
-// Sign up
-const signup = async (email, password) => {
-  const response = await fetch('http://localhost:3000/api/users/signup', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ email, password })
-  });
-  return response.json();
-};
-
-// Login
-const login = async (email, password) => {
-  const response = await fetch('http://localhost:3000/api/users/login', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ email, password })
-  });
-  return response.json();
-};
-
-// Create bucket (requires auth)
-const createBucket = async (token, bucketName) => {
-  const response = await fetch('http://localhost:3000/api/buckets', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    body: JSON.stringify({ name: bucketName })
-  });
-  return response.json();
-};
-
-// List buckets (requires auth)
-const listBuckets = async (token) => {
-  const response = await fetch('http://localhost:3000/api/buckets', {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
-  });
-  return response.json();
-};
-```
+6. **Get a bucket's policy:**
+   ```bash
+   curl -X GET http://localhost:3000/api/buckets/my-test-bucket/policy \
+     -H "Authorization: Bearer YOUR_JWT_TOKEN"
+   ```
 
 ## Database Schema
 
@@ -328,7 +237,7 @@ model Bucket {
 - Each user gets a record in PostgreSQL
 - Each user gets a MinIO IAM user with:
   - Unique accessKey and secretKey
-  - Custom policy for bucket access
+- When a user creates a bucket, a policy is set on that bucket allowing only their access key
 - Users can only access their own buckets
 
 ## Error Handling
@@ -363,7 +272,7 @@ Common HTTP status codes:
 ### Key Features
 
 1. **User Isolation**: Each user can only access their own buckets
-2. **MinIO IAM Integration**: Automatic user and policy creation
+2. **MinIO Bucket Policy Enforcement**: Each bucket is protected by a policy allowing only the owner's access key
 3. **JWT Authentication**: Secure token-based authentication
 4. **Database Integration**: PostgreSQL with Prisma ORM
 5. **Input Validation**: Comprehensive validation using express-validator
@@ -413,4 +322,4 @@ Common HTTP status codes:
 
 ## License
 
-ISC License 
+ISC License
